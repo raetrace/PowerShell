@@ -1,4 +1,4 @@
-﻿function Get-NetworkStatistics {
+function Get-NetworkStatistics {
     <#
     .SYNOPSIS
 	    Display current TCP/IP connections for local or remote system
@@ -8,7 +8,7 @@
 
     .DESCRIPTION
 	    Display current TCP/IP connections for local or remote system.  Includes the process ID (PID) and process name for each connection.
-	    If the port is not yet established, the port number is shown as an asterisk (*).	
+	    If the port is not yet established, the port number is shown as an asterisk (*).
 	
     .PARAMETER ProcessName
 	    Gets connections by the name of the process. The default value is '*'.
@@ -58,6 +58,17 @@
         Filter by IP Address family: IPv4, IPv6, or the default, * (both).
 
         If specified, we display any result where both the localaddress and the remoteaddress is in the address family.
+        
+        .PARAMETER Credential
+        Pass a set of PSCredentials to the function for accessing remote systems. Optional.
+        
+    .PARAMETER UserName
+        Enter a username with admin privileges to run on the system. Format DOMAIN\USER or MACHINENAME\USER.
+        Only required if local user is not an admin on the local or remote system. Optional
+        
+    .PARAMETER PassWord
+        Must be used with the UserName Parameter. Enter a password for the user credentials to be ran on the local or remote system.
+        Optional
 
     .EXAMPLE
 	    Get-NetworkStatistics | Format-Table
@@ -75,16 +86,16 @@
 	    Get-NetworkStatistics -State LISTENING -Protocol tcp
 
     .EXAMPLE
-        Get-NetworkStatistics -Computername Computer1, Computer2
+            Get-NetworkStatistics -Computername Computer1, Computer2
 
     .EXAMPLE
-        'Computer1', 'Computer2' | Get-NetworkStatistics
+            'Computer1', 'Computer2' | Get-NetworkStatistics
 
     .OUTPUTS
 	    System.Management.Automation.PSObject
 
     .NOTES
-	    Author: Shay Levy, code butchered by Cookie Monster
+	    Author: Shay Levy, code butchered by Cookie Monster. Further modified by David Garland
 	    Shay's Blog: http://PowerShay.com
         Cookie Monster's Blog: http://ramblingcookiemonster.github.io/
 
@@ -94,7 +105,7 @@
 	[OutputType('System.Management.Automation.PSObject')]
 	[CmdletBinding()]
 	param(
-		
+ 
 		[Parameter(Position=0)]
 		[System.String]$ProcessName='*',
 		
@@ -107,7 +118,7 @@
 		[Parameter(Position=3,
                    ValueFromPipeline = $True,
                    ValueFromPipelineByPropertyName = $True)]
-        [System.String[]]$ComputerName=$env:COMPUTERNAME,
+        	   [System.String[]]$ComputerName=$env:COMPUTERNAME,
 
 		[ValidateSet('*','tcp','udp')]
 		[System.String]$Protocol='*',
@@ -122,7 +133,17 @@
         [System.String]$TempFile = "C:\netstat.txt",
 
         [validateset('*','IPv4','IPv6')]
-        [string]$AddressFamily = '*'
+        [string]$AddressFamily = '*',
+        
+        [Parameter()]
+        [ValidateNotNull()]
+        [System.Management.Automation.PSCredential]
+        [System.Management.Automation.Credential()]
+        $Credential = [System.Management.Automation.PSCredential]::Empty,
+        
+        [string]$UserName = $null,
+        
+        [string]$PassWord = $null
 	)
     
 	begin{
@@ -132,6 +153,14 @@
         #store hostnames in array for quick lookup
             $dnsCache = @{}
             
+        #convert UserName and PassWord to a PSCredential
+        if ($UserName -and $PassWord) {
+            $pass = $PassWord | ConvertTo-SecureString -AsPlainText -Force
+            $Credential = New-Object System.Management.Automation.PSCredential($UserName,$pass)
+        } elseif ($UserName) {
+            #Only UserName was supplied, prompt for password and create PSCredential
+            $Credential = Get-Credential -Credential $UserName
+        }
 	}
 	
 	process{
@@ -141,7 +170,11 @@
             #Collect processes
             if($ShowProcessNames){
                 Try {
-                    $processes = Get-Process -ComputerName $Computer -ErrorAction stop | select name, id
+                    if ($Credential -ne [System.Management.Automation.PSCredential]::Empty) {
+                        $processes = Get-WmiObject -Class Win32_Process -ComputerName $Computer -Credential $Credential -ErrorAction stop | select name, @{n="Id";e={$_.processid}}
+                    } else {
+                        $processes = Get-Process -ComputerName $Computer -ErrorAction stop | select name, id
+                    }
                 }
                 Catch {
                     Write-warning "Could not run Get-Process -computername $Computer.  Verify permissions and connectivity.  Defaulting to no ShowProcessNames"
@@ -153,14 +186,14 @@
                 if($Computer -ne $env:COMPUTERNAME){
 
                     #define command
-                        [string]$cmd = "cmd /c c:\windows\system32\netstat.exe -ano >> $tempFile"
+                        [string]$cmd = "cmd /c netstat.exe -ano >> $tempFile"
             
                     #define remote file path - computername, drive, folder path
                         $remoteTempFile = "\\{0}\{1}`${2}" -f "$Computer", (split-path $tempFile -qualifier).TrimEnd(":"), (Split-Path $tempFile -noqualifier)
-
+                        
                     #delete previous results
                         Try{
-                            $null = Invoke-WmiMethod -class Win32_process -name Create -ArgumentList "cmd /c del $tempFile" -ComputerName $Computer -ErrorAction stop
+                            $null = Invoke-WmiMethod -class Win32_process -name Create -ArgumentList "cmd /c del $tempFile" -ComputerName $Computer -Credential $Credential -ErrorAction stop
                         }
                         Catch{
                             Write-Warning "Could not invoke create win32_process on $Computer to delete $tempfile"
@@ -168,7 +201,7 @@
 
                     #run command
                         Try{
-                            $processID = (Invoke-WmiMethod -class Win32_process -name Create -ArgumentList $cmd -ComputerName $Computer -ErrorAction stop).processid
+                            $processID = (Invoke-WmiMethod -class Win32_process -name Create -ArgumentList $cmd -ComputerName $Computer -Credential $Credential -ErrorAction stop).processid
                         }
                         Catch{
                             #If we didn't run netstat, break everything off
@@ -181,7 +214,11 @@
                             #This while should return true until the process completes
                                 $(
                                     try{
-                                        get-process -id $processid -computername $Computer -ErrorAction Stop
+                                        if ($Credential -ne [System.Management.Automation.PSCredential]::Empty) {
+                                            get-process -id $processid -computername $Computer -Credential $Credential -ErrorAction Stop
+                                        } else {
+                                            get-process -id $processid -computername $Computer -ErrorAction Stop
+                                        }
                                     }
                                     catch{
                                         $FALSE
@@ -190,9 +227,33 @@
                         ) {
                             start-sleep -seconds 2 
                         }
+
+                        start-sleep -seconds 10
             
                     #gather results
-                        if(test-path $remoteTempFile){
+                        if ($Credential -ne [System.Management.Automation.PSCredential]::Empty) {
+                            
+                            $networkCred = $Credential.GetNetworkCredential()
+                            net use \\$Computer\c$ $($networkCred.Password) /User:$($networkCred.domain)\$($networkCred.UserName) /y 2>&1>null
+                            $quiet = New-PSDrive -Name P -PSProvider FileSystem -Root \\$Computer\c$ -Scope Script
+
+                            $path = "P:\netstat.txt"
+
+                            Try {
+                                $results = Get-Content $path | Select-String -Pattern '\s+(TCP|UDP)'
+                            }
+                            Catch {
+                                Throw "Count not get content from remote computer for results"
+                                Break
+                            }
+                            
+                            Remove-Item -path $path -force
+
+                            Remove-PSDrive -Name P
+                            
+                            net use \\$Computer\c$ /delete /y 2>&1>null
+                            
+                        } elseif (test-path $remoteTempFile){
                     
                             Try {
                                 $results = Get-Content $remoteTempFile | Select-String -Pattern '\s+(TCP|UDP)'
@@ -291,9 +352,9 @@
 		    		        }
                    
                         #Display progress bar prior to getting process name or host name
-                            Write-Progress  -Activity "Resolving host and process names"`
-                                -Status "Resolving process ID $procId with remote address $remoteAddress and local address $localAddress"`
-                                -PercentComplete (( $count / $totalCount ) * 100)
+                            #Write-Progress  -Activity "Resolving host and process names"`
+                                #-Status "Resolving process ID $procId with remote address $remoteAddress and local address $localAddress"`
+                                #-PercentComplete (( $count / $totalCount ) * 100)
     	    		
                         #If we are running showprocessnames, get the matching name
                             if($ShowProcessNames -or $PSBoundParameters.ContainsKey -eq 'ProcessName'){
