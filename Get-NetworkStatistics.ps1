@@ -9,7 +9,10 @@ function Get-NetworkStatistics {
     .DESCRIPTION
 	    Display current TCP/IP connections for local or remote system.  Includes the process ID (PID) and process name for each connection.
 	    If the port is not yet established, the port number is shown as an asterisk (*).
-	
+        
+    .PARAMETER Credential
+        Pass a set of PSCredentials to the function for accessing remote systems. Optional.
+        
     .PARAMETER ProcessName
 	    Gets connections by the name of the process. The default value is '*'.
 	
@@ -58,17 +61,6 @@ function Get-NetworkStatistics {
         Filter by IP Address family: IPv4, IPv6, or the default, * (both).
 
         If specified, we display any result where both the localaddress and the remoteaddress is in the address family.
-        
-        .PARAMETER Credential
-        Pass a set of PSCredentials to the function for accessing remote systems. Optional.
-        
-    .PARAMETER UserName
-        Enter a username with admin privileges to run on the system. Format DOMAIN\USER or MACHINENAME\USER.
-        Only required if local user is not an admin on the local or remote system. Optional
-        
-    .PARAMETER PassWord
-        Must be used with the UserName Parameter. Enter a password for the user credentials to be ran on the local or remote system.
-        Optional
 
     .EXAMPLE
 	    Get-NetworkStatistics | Format-Table
@@ -86,10 +78,10 @@ function Get-NetworkStatistics {
 	    Get-NetworkStatistics -State LISTENING -Protocol tcp
 
     .EXAMPLE
-            Get-NetworkStatistics -Computername Computer1, Computer2
+        Get-NetworkStatistics -Computername Computer1, Computer2
 
     .EXAMPLE
-            'Computer1', 'Computer2' | Get-NetworkStatistics
+        'Computer1', 'Computer2' | Get-NetworkStatistics
 
     .OUTPUTS
 	    System.Management.Automation.PSObject
@@ -118,7 +110,7 @@ function Get-NetworkStatistics {
 		[Parameter(Position=3,
                    ValueFromPipeline = $True,
                    ValueFromPipelineByPropertyName = $True)]
-        	   [System.String[]]$ComputerName=$env:COMPUTERNAME,
+        [System.String[]]$ComputerName=$env:COMPUTERNAME,
 
 		[ValidateSet('*','tcp','udp')]
 		[System.String]$Protocol='*',
@@ -139,28 +131,17 @@ function Get-NetworkStatistics {
         [ValidateNotNull()]
         [System.Management.Automation.PSCredential]
         [System.Management.Automation.Credential()]
-        $Credential = [System.Management.Automation.PSCredential]::Empty,
-        
-        [string]$UserName = $null,
-        
-        [string]$PassWord = $null
+        $Credential = [System.Management.Automation.PSCredential]::Empty
+
 	)
     
 	begin{
         #Define properties
-            $properties = 'ComputerName','Protocol','LocalAddress','LocalPort','RemoteAddress','RemotePort','State','ProcessName','PID'
+            $properties = 'ComputerName','Protocol','LocalAddress','LocalPort','RemoteAddress','RemotePort','State','ProcessName','PID','Credential'
 
         #store hostnames in array for quick lookup
             $dnsCache = @{}
             
-        #convert UserName and PassWord to a PSCredential
-        if ($UserName -and $PassWord) {
-            $pass = $PassWord | ConvertTo-SecureString -AsPlainText -Force
-            $Credential = New-Object System.Management.Automation.PSCredential($UserName,$pass)
-        } elseif ($UserName) {
-            #Only UserName was supplied, prompt for password and create PSCredential
-            $Credential = Get-Credential -Credential $UserName
-        }
 	}
 	
 	process{
@@ -439,3 +420,5 @@ function Get-NetworkStatistics {
         }
     }
 }
+
+Export-ModuleMember -Function Get-NetworkStatistics
